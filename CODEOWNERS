@@ -1,0 +1,6 @@
+# AE Enforcement — protected files (auto-added by repo-bootstrap.sh)
+GATE7.txt @Agyeman-Enterprises/enforcement-admins
+.github/workflows/ci.yml @Agyeman-Enterprises/enforcement-admins
+scripts/run-gate.sh @Agyeman-Enterprises/enforcement-admins
+scripts/hooks/pre-commit @Agyeman-Enterprises/enforcement-admins
+scripts/verify-install.sh @Agyeman-Enterprises/enforcement-admins

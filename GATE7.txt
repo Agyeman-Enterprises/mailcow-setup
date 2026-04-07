@@ -1,0 +1,89 @@
+MAILCOW-SETUP — GATE 7: PRODUCT-SPECIFIC BEHAVIORAL TEST
+=========================================================
+This is a domain-discovery and mail configuration automation tool.
+It scans repos across Agyeman-Enterprises, isaalia, and imho-media orgs,
+extracts real domain names, and configures Cloudflare DNS + Mailcow in one run.
+Verification must center on the IDEMPOTENT DISCOVERY + SETUP FLOW.
+
+This file is read by RELEASE_GATE.txt Gate 7.
+Every check below must PASS before mailcow-setup can be called done.
+
+===================================================================
+SECTION A: ENVIRONMENT + CREDENTIALS
+===================================================================
+
+  [ ] GITHUB_TOKEN env var present and can list repos for all 3 orgs
+  [ ] CLOUDFLARE_API_TOKEN env var present and can list zones
+  [ ] MAILCOW_API_KEY env var present and can reach MAILCOW_HOST
+  [ ] MAILCOW_HOST resolves (mail.agyemanenterprises.com)
+  [ ] MAIL_SERVER_IP set to 34.26.207.116
+
+===================================================================
+SECTION B: DOMAIN DISCOVERY
+===================================================================
+
+  [ ] Script discovers repos across all 3 orgs: Agyeman-Enterprises, isaalia, imho-media
+  [ ] Script scans .env.example, README.md, vercel.json, .env*, mailcow.conf per repo
+  [ ] Discovered domains are real domains (not localhost, *.supabase.co, *.vercel.app, etc.)
+  [ ] Filter correctly excludes: localhost, *.supabase.co, *.vercel.app, *.cloudflare.net,
+      *.googleapis.com, *.github.com, *.docker.internal
+  [ ] Duplicate domains across repos are deduplicated
+  [ ] At least one real domain discovered from the known repos
+
+===================================================================
+SECTION C: CLOUDFLARE DNS CONFIGURATION
+===================================================================
+
+  [ ] /client/v4/zones?name={root_domain} returns zone ID for a known domain
+  [ ] /client/v4/zones/{zone_id}/dns_records?type=A&name=mail.{domain} — check before add
+  [ ] /client/v4/zones/{zone_id}/dns_records POST — A record mail→34.26.207.116 created
+  [ ] /client/v4/zones/{zone_id}/dns_records POST — MX @→mail.agyemanenterprises.com p10 created
+  [ ] /client/v4/zones/{zone_id}/dns_records POST — TXT @→v=spf1 mx a:mail.agyemanenterprises.com ~all created
+  [ ] Re-running adds no duplicate DNS records (idempotent)
+  [ ] Domains without a Cloudflare zone are logged as NO_ZONE, not errored
+
+===================================================================
+SECTION D: MAILCOW DOMAIN SETUP
+===================================================================
+
+  [ ] /api/v1/get/domain/all returns current domain list for existence check
+  [ ] /api/v1/add/domain POST succeeds for a new domain
+  [ ] Re-running against an existing domain skips (not duplicate error)
+  [ ] Mailcow API errors are caught and logged — script does not crash
+  [ ] Domains added to Mailcow appear in summary log under ADDED
+
+===================================================================
+SECTION E: THE MANDATORY IDEMPOTENCY TEST
+===================================================================
+
+  [ ] Run discover-and-setup.sh once → observe domains ADDED
+  [ ] Run discover-and-setup.sh again immediately (no changes)
+  [ ] Second run shows all domains SKIPPED, zero ADDED
+  [ ] No error output on second run
+  [ ] Summary counts: domains_found > 0, domains_added = 0, domains_skipped > 0
+
+===================================================================
+SECTION F: SUMMARY OUTPUT
+===================================================================
+
+  [ ] Script prints summary at end: domains_found, domains_added, domains_skipped
+  [ ] Each domain line shows status: ADDED / SKIPPED / ERROR / NO_ZONE
+  [ ] Log is readable without parsing — plain text or structured JSON
+
+===================================================================
+SECTION G: GITHUB ACTIONS WEBHOOK TRIGGER
+===================================================================
+
+  [ ] auto-mail-setup.yml workflow file present and valid YAML
+  [ ] Workflow triggers on repository created event (via webhook or repository_dispatch)
+  [ ] Workflow runs discover-and-setup.sh scoped to new repo only
+  [ ] Required secrets documented in workflow comments
+
+===================================================================
+WHAT CLAUDE IS NOT ALLOWED TO SUBSTITUTE FOR THIS TEST
+===================================================================
+
+  - "script exits 0" → NOT A PRODUCT TEST
+  - "DNS records look correct in code" → NOT A PRODUCT TEST
+  - "API call returns 200" → NOT A PRODUCT TEST
+  - Only a full end-to-end run against real APIs with real domains counts as PASS.

@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# ============================================================
+# .git/hooks/pre-commit — Agyeman Enterprises backup enforcer
+# Primary enforcement = run-gate.sh (blocks terminal)
+# This hook is the safety net that catches commits that
+# bypass the gate script.
+# ============================================================
+
+set -uo pipefail
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+hard_stop() {
+  echo -e "\n${RED}⛔ COMMIT BLOCKED: $1${NC}" >&2
+  echo -e "${RED}   Fix this before committing.${NC}\n" >&2
+  exit 1
+}
+
+# ── 1. PLAN_APPROVED must exist ──────────────────────────────
+if [ ! -f ".claude/PLAN_APPROVED" ]; then
+  hard_stop ".claude/PLAN_APPROVED not found. Get Akua's approval on PLAN.md first."
+fi
+
+# ── 2. GATE_PASSED must exist ────────────────────────────────
+if [ ! -f ".claude/GATE_PASSED" ]; then
+  hard_stop ".claude/GATE_PASSED not found. Run 'bash scripts/run-gate.sh' and get Akua's approval before committing."
+fi
+
+# ── 3. Scan staged files for forbidden patterns ──────────────
+# Only scan application source code — not spec/test files (they assert against these patterns)
+# and not shell scripts or template files.
+STAGED=$(git diff --cached --name-only --diff-filter=ACM 2>/dev/null \
+  | grep -E '\.(ts|tsx|js|jsx)$' \
+  | grep -vE '\.spec\.(ts|tsx|js)$|\.test\.(ts|tsx|js)$|scripts/|/scripts/' \
+  || true)
+
+if [ -n "$STAGED" ]; then
+
+  # Empty onClick handlers — onClick={() => {}} or onClick={() => {}}
+  if git diff --cached -- $STAGED 2>/dev/null | grep -E 'onClick=\{\s*\(\s*\)\s*=>\s*\{?\s*\}?\s*\}' > /dev/null 2>&1; then
+    hard_stop "Empty onClick handler found in staged files. Wire it to a real action or remove the button."
+  fi
+
+  # TODO: implement (without phase reason)
+  if git diff --cached -- $STAGED 2>/dev/null | grep -E '//\s*TODO:\s*(implement|fix|finish|complete|add|write)\b' > /dev/null 2>&1; then
+    hard_stop "Bare // TODO found. Use // TODO(phase-N): <reason> format or implement it."
+  fi
+
+  # PLACEHOLDER comment
+  if git diff --cached -- $STAGED 2>/dev/null | grep -iE '//\s*PLACEHOLDER' > /dev/null 2>&1; then
+    hard_stop "// PLACEHOLDER found. Implement it or remove it."
+  fi
+
+  # Coming Soon string literal
+  if git diff --cached -- $STAGED 2>/dev/null | grep -E '["'"'"']Coming Soon["'"'"']' > /dev/null 2>&1; then
+    hard_stop '"Coming Soon" found in staged files. Implement or defer with // TODO(phase-N): reason.'
+  fi
+
+  # Hardcoded demo/placeholder data patterns
+  if git diff --cached -- $STAGED 2>/dev/null | grep -iE '"(John Doe|Jane Doe|Demo User|Test User|Placeholder|Lorem Ipsum)"' > /dev/null 2>&1; then
+    hard_stop "Hardcoded placeholder data found in staged files. Use real data from the database."
+  fi
+
+  # Empty arrow function bodies used as event handlers
+  if git diff --cached -- $STAGED 2>/dev/null | grep -E 'on[A-Z][a-zA-Z]+=\{[[:space:]]*\(\)[[:space:]]*=>[[:space:]]*null\}' > /dev/null 2>&1; then
+    hard_stop "Null event handler found. Wire it or remove it."
+  fi
+
+fi
+
+echo -e "${GREEN}✅ Pre-commit checks passed.${NC}"
+exit 0

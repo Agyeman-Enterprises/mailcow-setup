@@ -1,0 +1,50 @@
+# auto-mail-setup.yml
+# Triggered when a new repository is created in any of the three orgs.
+# Runs discover-and-setup.sh scoped to just the new repo.
+#
+# Setup:
+#   1. Install a GitHub App or Org webhook pointing at:
+#        https://api.github.com/repos/Agyeman-Enterprises/mailcow-setup/dispatches
+#      with event_type: "repo_created" and payload { "org": "...", "repo": "..." }
+#   2. Add these secrets in Settings → Secrets → Actions:
+#        GITHUB_TOKEN_ORG    — PAT with repo scope across all 3 orgs
+#        CLOUDFLARE_API_TOKEN — DNS:Edit scoped token
+#        MAILCOW_API_KEY      — from Mailcow admin UI
+#        MAILCOW_HOST         — mail.agyemanenterprises.com
+#        MAIL_SERVER_IP       — 34.26.207.116
+
+name: "Auto Mail Setup — New Repo"
+
+on:
+  repository_dispatch:
+    types: [repo_created]
+
+jobs:
+  setup:
+    name: "Discover and configure domains"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Run domain discovery (scoped to new repo)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN_ORG }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MAILCOW_API_KEY: ${{ secrets.MAILCOW_API_KEY }}
+          MAILCOW_HOST: ${{ secrets.MAILCOW_HOST }}
+          MAIL_SERVER_IP: ${{ secrets.MAIL_SERVER_IP }}
+        run: |
+          ORG="${{ github.event.client_payload.org }}"
+          REPO="${{ github.event.client_payload.repo }}"
+          echo "New repo detected: ${ORG}/${REPO}"
+          bash scripts/discover-and-setup.sh "$ORG" "$REPO"
+
+      - name: Log result
+        if: always()
+        run: echo "Job finished with status ${{ job.status }}"

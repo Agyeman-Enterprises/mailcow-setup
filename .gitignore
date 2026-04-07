@@ -1,0 +1,8 @@
+.env
+.env.local
+.claude/PLAN_APPROVED
+.claude/GATE_PASSED
+.claude/SCHEMA_READ
+.claude/TSC_PASSED
+.claude/GATE_CERT.json
+node_modules/
