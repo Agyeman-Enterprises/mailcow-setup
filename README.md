@@ -1,142 +1,134 @@
 # mailcow-setup
 
-Automatically discovers real domain names from GitHub repos and wires up email for them — Cloudflare DNS records + Mailcow domain registration — in one command.
+Declarative source-of-truth + GitHub-Actions-driven reconciler for the Agyeman
+Enterprises mail stack. Add a domain to `domains.yml`, push, and CI fully configures
+Mailcow + Resend + Cloudflare DNS.
 
 ---
 
-## What it does
+## Architecture (read first)
 
-1. **Scans all repos** across three GitHub orgs (`Agyeman-Enterprises`, `isaalia`, `imho-media`)
-2. **Finds real domain names** in config files (`.env.example`, `README.md`, `vercel.json`, `mailcow.conf`, `.env*`)
-3. **Skips fake domains** — filters out localhost, Supabase, Vercel, Cloudflare, GitHub, and other infrastructure hostnames automatically
-4. **Looks up Cloudflare** — finds the zone for each domain automatically (no manual zone ID list)
-5. **Adds DNS records** — `mail` A record → `34.26.207.116`, MX record, SPF TXT record
-6. **Adds domain to Mailcow** — so the mail server accepts email for it
-7. **Skips anything already done** — safe to run repeatedly, nothing gets duplicated
+- **Mailcow** (on the GCP VM `mail-server`, host `mail.agyemanenterprises.com`) =
+  receive server for all product-domain mail.
+- **Resend** = outbound transactional sender. Each product domain gets its own
+  verified Resend domain + DKIM.
+- **Google Workspace on `agyemanenterprises.com`** = the holding-co's single reading
+  inbox (the "desk"). Every alias on every product domain forwards here.
+- **`agyemanenterprises.com` never goes into Mailcow.** If it's there, aliases
+  targeting `admin@agyemanenterprises.com` get trapped locally instead of relayed
+  out — the whole one-inbox design breaks. `scripts/onboard-domain.py` refuses
+  it in code.
+
+Full flow for inbound on a product domain:
+
+```
+sender → MX(<product>.com) → Mailcow → alias rewrites to admin@agyemanenterprises.com
+       → external SMTP relay → MX(agyemanenterprises.com) → Cloudflare Email Routing
+       → Google Workspace desk
+```
 
 ---
 
-## One-time setup
+## Daily use
 
-### 1. Copy the example env file
+### Adding a new product domain
 
+1. Make sure the domain is a zone in Cloudflare.
+2. Edit `domains.yml`, add the domain under the right list:
+   - `full` — MX swapped to Mailcow, all DNS records set, aliases created
+   - `stage` — keep existing inbound (CF Email Routing / Google W/S), but still set
+     up Mailcow registration, DKIM, Resend, SPF-with-CF-include, aliases
+   - `cf_email_routing` — treated same as `stage`; included for documentation of
+     domains you've decided to leave on CF
+3. Commit, push to `main`.
+4. The **Onboard domains** workflow runs automatically (also nightly at 09:00 UTC
+   and on-demand via `workflow_dispatch`).
+
+### Manual run locally
+
+```bash
+cp .env.example .env      # fill in creds
+set -a && source .env && set +a
+
+# Verify everything (no changes)
+python scripts/reconcile.py --verify-only
+
+# Onboard just one domain
+python scripts/onboard-domain.py some-new-app.com
+
+# Onboard but keep existing MX (Google W/S / CF routing)
+python scripts/onboard-domain.py some-new-app.com --stage
+
+# Verify a single domain's current state
+python scripts/onboard-domain.py some-new-app.com --verify-only
 ```
-cp .env.example .env
-```
 
-### 2. Fill in your credentials
+---
 
-Open `.env` and fill in each line:
+## What `onboard-domain.py` does (per domain)
 
-| Variable | Where to get it |
+1. Refuses to touch `agyemanenterprises.com`.
+2. Looks up the Cloudflare zone. If none, hard-fails.
+3. Detects Cloudflare Email Routing — auto-stages if enabled (MX won't be swapped,
+   SPF gets the `_spf.mx.cloudflare.net` include).
+4. Mailcow: add domain (idempotent), generate DKIM (idempotent).
+5. Resend: add domain (idempotent), fetch DKIM + send-subdomain records.
+6. Cloudflare DNS upserts (idempotent):
+   - `A mail.<d>` → `34.26.207.116`
+   - `MX <d>` → `mail.agyemanenterprises.com` priority 10 (unless staged)
+   - `TXT <d>` SPF (Mailcow or CF-routing variant, depending on mode)
+   - `TXT dkim._domainkey.<d>` → Mailcow DKIM
+   - `TXT resend._domainkey.<d>` → Resend DKIM
+   - `MX send.<d>` → Resend bounce MX
+   - `TXT send.<d>` → Resend SPF
+7. Mailcow aliases: `admin`, `contact`, `privacy`, `sales`, `legal`, `aagyeman`,
+   `hosei`, `aanderson`, `mattk`, and a `@<d>` catchall — all forwarding to
+   `admin@agyemanenterprises.com`.
+
+All steps are idempotent. Reruns are no-ops on anything already correct.
+
+---
+
+## Files
+
+| Path | Role |
 |---|---|
-| `GITHUB_TOKEN` | GitHub → Settings → Developer settings → Personal access tokens (needs `repo` scope on all 3 orgs) |
-| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → My Profile → API Tokens → Create Token → Zone DNS Edit |
-| `MAILCOW_API_KEY` | Mailcow admin UI → Configuration → Access → API Access |
-| `MAILCOW_HOST` | Already set to `mail.agyemanenterprises.com` — leave it |
-| `MAIL_SERVER_IP` | Already set to `34.26.207.116` — leave it |
-
-### 3. Install jq (if not already installed)
-
-```
-# macOS
-brew install jq
-
-# Ubuntu/Debian
-sudo apt-get install jq
-
-# Windows (Git Bash)
-winget install jqlang.jq
-```
+| `domains.yml` | Source of truth — edit this to add/move domains |
+| `scripts/onboard-domain.py` | Per-domain orchestrator |
+| `scripts/reconcile.py` | Reads `domains.yml`, calls onboard for each |
+| `scripts/zone-activity.sh` | Utility: classify CF zones as active vs parked |
+| `.github/workflows/onboard.yml` | CI: push, nightly schedule, manual dispatch |
+| `.env.example` | Credentials template |
 
 ---
 
-## Running it
+## CI / secrets
 
-### Scan everything (all three orgs)
+GitHub Actions workflow `Onboard domains` runs on:
 
-```bash
-source .env
-bash scripts/discover-and-setup.sh
-```
+- `push` to `main` when `domains.yml` or `scripts/**` changes
+- `schedule`: nightly drift-reconcile (09:00 UTC / ≈ 19:00 Guam)
+- `workflow_dispatch`: manual trigger with optional `verify_only` / `only` inputs
 
-### Scan a specific repo only
+Repository secrets required (set via `gh secret set --repo Agyeman-Enterprises/mailcow-setup`):
 
-```bash
-source .env
-bash scripts/discover-and-setup.sh Agyeman-Enterprises my-repo-name
-```
-
-### What the output looks like
-
-```
-════════════════════════════════════════════════════════
-  Mailcow Domain Discovery + Setup
-════════════════════════════════════════════════════════
-
-── Org: Agyeman-Enterprises ──
-→ Scanning Agyeman-Enterprises/plotpilot
-  plotpilot.io ... ADDED
-  www.plotpilot.io ... SKIPPED (already exists)
-
-→ Scanning Agyeman-Enterprises/linahla
-  linahla.com ... ADDED
-
-── Org: isaalia ──
-→ Scanning isaalia/portfolio
-  (no real domains found)
-
-════════════════════════════════════════════════════════
-  Summary
-────────────────────────────────────────────────────────
-  Domains found:    3
-  Domains added:    2
-  Domains skipped:  1
-  No CF zone:       0
-  Errors:           0
-════════════════════════════════════════════════════════
-```
-
-**Status meanings:**
-- `ADDED` — DNS records and Mailcow domain created
-- `SKIPPED` — already existed, nothing changed
-- `NO_ZONE` — domain not found in your Cloudflare account (may be on a different registrar)
-- `ERROR` — API call failed (check API keys or network)
+| Secret | Source |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard, DNS:Edit on all zones |
+| `MAILCOW_API_KEY` | Mailcow admin UI → Access → API |
+| `MAILCOW_HOST` | `mail.agyemanenterprises.com` |
+| `MAIL_SERVER_IP` | `34.26.207.116` |
+| `RESEND_API_KEY` | resend.com → API Keys |
 
 ---
 
-## Automatic setup for new repos
+## Hard rules (enforced in code and in review)
 
-A GitHub Actions workflow (`auto-mail-setup.yml`) runs the discovery script automatically when a new repo is created in any of the three orgs.
-
-**To enable it:**
-
-1. Add these secrets to this repo (Settings → Secrets → Actions):
-   - `GITHUB_TOKEN_ORG` — PAT with repo scope
-   - `CLOUDFLARE_API_TOKEN`
-   - `MAILCOW_API_KEY`
-   - `MAILCOW_HOST`
-   - `MAIL_SERVER_IP`
-
-2. Set up a GitHub org webhook (or GitHub App) that fires `repository` `created` events and sends a `repository_dispatch` to this repo with:
-   ```json
-   {
-     "event_type": "repo_created",
-     "client_payload": {
-       "org": "Agyeman-Enterprises",
-       "repo": "new-repo-name"
-     }
-   }
-   ```
-
----
-
-## Troubleshooting
-
-**"No CF zone found"** — The domain's registrar is not Cloudflare, or the domain uses a nameserver that isn't managed in your Cloudflare account. Add it manually.
-
-**"ERROR (Mailcow)"** — Check that `MAILCOW_API_KEY` is correct and that the Mailcow server is reachable. Try: `curl -H "X-API-Key: YOUR_KEY" https://mail.agyemanenterprises.com/api/v1/get/domain/all`
-
-**"ERROR (DNS)"** — Check that `CLOUDFLARE_API_TOKEN` has `Zone:Read` + `DNS:Edit` permissions.
-
-**Script finds no domains** — The repo files may not contain recognisable domain patterns, or the files listed in `FILES_TO_SCAN` don't exist in that repo. Check the repo manually.
+1. `agyemanenterprises.com` is NEVER in Mailcow's domain registry.
+2. Do not bulk-act on all 227 Cloudflare zones — use `domains.yml` as the curated
+   active set.
+3. On a domain currently using CF Email Routing, SPF must include
+   `_spf.mx.cloudflare.net` — otherwise CF flags the zone as misconfigured and
+   forwarded mail can fail SPF at Gmail.
+4. Destructive actions (delete mailbox, delete domain, disable email routing)
+   never run from automation. If it's in this repo, it's additive/reconciling.

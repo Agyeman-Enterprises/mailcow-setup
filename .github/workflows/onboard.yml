@@ -1,0 +1,74 @@
+name: Onboard domains
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "domains.yml"
+      - "scripts/**"
+      - ".github/workflows/onboard.yml"
+  workflow_dispatch:
+    inputs:
+      verify_only:
+        description: "Run in verify-only mode (no changes)"
+        required: false
+        default: "false"
+      only:
+        description: "Comma-separated domains to scope to (optional)"
+        required: false
+        default: ""
+  schedule:
+    # Nightly drift-reconcile at 09:00 UTC (≈ 19:00 Guam)
+    - cron: "0 9 * * *"
+
+concurrency:
+  group: onboard-domains
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    environment: mail-stack
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install pyyaml
+
+      - name: Validate required secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MAILCOW_API_KEY: ${{ secrets.MAILCOW_API_KEY }}
+          MAILCOW_HOST: ${{ secrets.MAILCOW_HOST }}
+          MAIL_SERVER_IP: ${{ secrets.MAIL_SERVER_IP }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          missing=0
+          for v in CLOUDFLARE_API_TOKEN MAILCOW_API_KEY MAILCOW_HOST MAIL_SERVER_IP RESEND_API_KEY; do
+            if [ -z "${!v:-}" ]; then
+              echo "::error::Missing secret: $v"
+              missing=1
+            fi
+          done
+          exit $missing
+
+      - name: Reconcile
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MAILCOW_API_KEY: ${{ secrets.MAILCOW_API_KEY }}
+          MAILCOW_HOST: ${{ secrets.MAILCOW_HOST }}
+          MAIL_SERVER_IP: ${{ secrets.MAIL_SERVER_IP }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+        run: |
+          args=""
+          if [ "${{ github.event.inputs.verify_only }}" = "true" ]; then
+            args="$args --verify-only"
+          fi
+          if [ -n "${{ github.event.inputs.only }}" ]; then
+            args="$args --only ${{ github.event.inputs.only }}"
+          fi
+          python scripts/reconcile.py $args

@@ -1,0 +1,66 @@
+# Source of truth for product-domain onboarding to the Agyeman Enterprises mail stack.
+#
+# Edit this file, commit, push. The `Onboard domains` workflow reconciles the state
+# via scripts/reconcile.py → scripts/onboard-domain.py.
+#
+# Modes:
+#   full   — MX swapped to Mailcow (inbound goes to mail.agyemanenterprises.com)
+#   stage  — MX left alone (CF Email Routing or Google W/S keeps handling inbound).
+#            Still gets Mailcow registration + DKIM + Resend + SPF-with-CF-include + mail.A.
+#   skip   — ignored entirely. Use for the holding-co domain so automation never touches it.
+#
+# NEVER add agyemanenterprises.com with mode full/stage. It is the Google W/S holding-co
+# inbox — MUST stay outside Mailcow. The onboard script refuses it anyway.
+
+holding_company:
+  - { domain: agyemanenterprises.com, mode: skip, note: "Google Workspace — DO NOT onboard" }
+
+# Fully migrated to Mailcow (MX -> mail.agyemanenterprises.com)
+full:
+  - accessmd.care
+  - aeriastudios.com
+  - alrtme.co
+  - brightroot.academy
+  - cannexis.net
+  - codeweaverai.co
+  - denovoai.co
+  - entitytaxpro.com
+  - i-aaa.com
+  - iamaaa.us
+  - imho.media
+  - medrx.co
+  - myhealthally.app
+  - openarcade.games
+  - purrkoin.co
+  - resusrunner.com
+  - solopractice.co
+  - srvrsup.io
+  - synapsecrm.co
+  - synessis.com
+  - taxrx.co
+  - thredz.io
+  - whink.app
+  - whozoncall.com
+
+# Registered in Mailcow but MX not swapped (still on CF Email Routing or Google W/S)
+stage:
+  - { domain: ohimaa.com,    note: "paired with agyemanenterprises.com — keep CF routing" }
+  - { domain: ohimaa.health, note: "paired with agyemanenterprises.com — keep CF routing" }
+
+# CF Email Routing-locked — user decision 2026-04-19 not to migrate
+# onboard-domain.py auto-detects CF Email Routing and runs in stage mode,
+# so including them here is safe and ensures SPF/DKIM stays correct.
+cf_email_routing:
+  - aitonoma.ai
+  - calaente.com
+  - dramd.health
+  - flyryt.ai
+  - linahla.com
+  - listuapp.com
+  - mededconnect.co
+  - plotpilot.io
+  - scalpelnstack.com
+  - scribemdpro.com
+  - telzyn.co
+  - vokryn.com
+  - vukori.com
