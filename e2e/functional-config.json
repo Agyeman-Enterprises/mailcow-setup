@@ -1,0 +1,25 @@
+{
+  "_note": "mailcow-setup is a CLI/script automation tool for domain discovery and Mailcow/Cloudflare DNS configuration. No web CRUD UI exists. Minimal config; functional CRUD tests are N/A.",
+  "appName": "Mailcow Setup",
+  "primaryEntity": {
+    "humanName": "Domain",
+    "createPath": "/",
+    "createTriggerText": "Create",
+    "listPath": "/",
+    "apiListEndpoint": "/api/items",
+    "apiGetEndpoint": "/api/items",
+    "fields": [{"selector": "input[type=\"text\"]", "testValue": "E2E test item", "updatedValue": "E2E test item updated", "type": "text"}],
+    "listTextMarker": "E2E test item",
+    "editTriggerSelector": "button[aria-label*=\"edit\" i]",
+    "deleteTriggerSelector": "button[aria-label*=\"delete\" i]",
+    "deleteConfirmText": "Confirm"
+  },
+  "criticalFlow": {
+    "description": "CLI tool — no browser UI to navigate",
+    "steps": [{"action": "goto", "target": "/", "description": "Navigate to root"}],
+    "completionMarker": "/"
+  },
+  "authPaths": {"login": "/login", "protected": "/dashboard", "logout": null},
+  "emptyStateText": "No items",
+  "navLinks": ["/"]
+}
